@@ -1,31 +1,32 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_date, year, month, weekofyear, sum as spark_sum
-import os
-import glob
-import shutil
 
+# Create Spark session and connect to HDFS
 spark = SparkSession.builder \
     .appName("Walmart_Preprocess") \
+    .config("spark.hadoop.fs.defaultFS", "hdfs://localhost:9000") \
     .getOrCreate()
 
-# 1. Read raw CSV files
-# nullValue="NA" giúp Spark hiểu NA là giá trị thiếu
+# 1. Read raw CSV files from HDFS
+# nullValue="NA" helps Spark understand NA as missing value
+base_path = "hdfs://localhost:9000/bigdata/walmart/raw"
+
 train = spark.read.csv(
-    "data/raw/train.csv",
+    f"{base_path}/train.csv",
     header=True,
     inferSchema=True,
     nullValue="NA"
 )
 
 features = spark.read.csv(
-    "data/raw/features.csv",
+    f"{base_path}/features.csv",
     header=True,
     inferSchema=True,
     nullValue="NA"
 )
 
 stores = spark.read.csv(
-    "data/raw/stores.csv",
+    f"{base_path}/stores.csv",
     header=True,
     inferSchema=True,
     nullValue="NA"
@@ -38,6 +39,9 @@ print("features rows:", features.count(), "| columns:", len(features.columns))
 print("stores rows:", stores.count(), "| columns:", len(stores.columns))
 
 # 3. Join datasets
+# train is the main table because it contains Weekly_Sales
+# Join train with features by Store, Date, IsHoliday
+# Join with stores by Store
 df = train.join(features, ["Store", "Date", "IsHoliday"], "left") \
           .join(stores, ["Store"], "left")
 
@@ -72,32 +76,14 @@ df.select([
     for c in df.columns
 ]).show(truncate=False)
 
-# 7. Save as one CSV file
-output_dir = "data/processed/"
-final_csv_name = "walmart_sales_enriched.csv"
+# 7. Save processed dataset to HDFS as Parquet
+# Parquet is recommended for Spark because it is faster and better for SQL/MLlib
+output_path = "hdfs://localhost:9000/bigdata/walmart/processed/walmart_sales_enriched"
 
-df.coalesce(1) \
-  .write \
+df.write \
   .mode("overwrite") \
-  .option("header", True) \
-  .csv(output_dir)
+  .parquet(output_path)
 
-# 8. Rename Spark part file to walmart_sales_enriched.csv
-part_file = glob.glob(os.path.join(output_dir, "part-*.csv"))[0]
-final_path = os.path.join(output_dir, final_csv_name)
-
-if os.path.exists(final_path):
-    os.remove(final_path)
-
-shutil.move(part_file, final_path)
-
-# 9. Remove unnecessary Spark/Hadoop output files
-for file_path in glob.glob(os.path.join(output_dir, "_SUCCESS")):
-    os.remove(file_path)
-
-for file_path in glob.glob(os.path.join(output_dir, ".*.crc")):
-    os.remove(file_path)
-
-print("Saved final CSV to:", final_path)
+print("Saved processed dataset to:", output_path)
 
 spark.stop()
