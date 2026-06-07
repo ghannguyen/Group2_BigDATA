@@ -73,7 +73,7 @@ df.select([
 ]).show(truncate=False)
 
 # 7. Save as one CSV file
-output_dir = "data/processed/walmart_sales_enriched"
+output_dir = "data/processed/"
 final_csv_name = "walmart_sales_enriched.csv"
 
 df.coalesce(1) \
