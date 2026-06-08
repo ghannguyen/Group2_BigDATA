@@ -205,6 +205,7 @@ print("=" * 90)
 query_4.explain(True)
 
 # Cau 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam
+# Muc dich: xac dinh cac cua hang co toc do tang truong doanh so cao nhat so voi nam truoc.
 query_5 = spark.sql("""
     WITH yearly_store_sales AS (
         SELECT
@@ -241,13 +242,17 @@ query_5 = spark.sql("""
     LIMIT 5
 """)
 
+
 print("\n" + "=" * 90)
 print("CAU 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam")
 print("=" * 90)
 query_5.show(50, truncate=False)
 
 
+
+
 # Cau 6: Phan tich department co doanh so cao hon trung binh cua chinh cua hang
+# Muc dich: tim cac department dong gop noi bat va vuot muc trung binh doanh thu trong tung cua hang.
 query_6 = spark.sql("""
     WITH dept_store_sales AS (
         SELECT
@@ -280,43 +285,76 @@ query_6 = spark.sql("""
     LIMIT 10
 """)
 
+
 print("\n" + "=" * 90)
 print("CAU 6: Department co doanh so cao hon trung binh cua chinh cua hang")
 print("=" * 90)
 query_6.show(50, truncate=False)
 
 
-# Cau 7: Anh huong cua nhiet do den doanh so theo tung loai cua hang
+
+
+# Cau 7: Xep hang nhom nhiet do co doanh so cao nhat theo tung loai cua hang
+# Muc dich: phan tich dieu kien nhiet do nao tao ra doanh so trung binh cao nhat trong tung Type.
 query_7 = spark.sql("""
+    WITH temperature_sales AS (
+        SELECT
+            Type,
+            CASE
+                WHEN Temperature < 40 THEN 'Cold'
+                WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
+                ELSE 'Hot'
+            END AS temperature_group,
+            COUNT(*) AS total_records,
+            ROUND(AVG(Temperature), 2) AS avg_temperature,
+            ROUND(SUM(Weekly_Sales), 2) AS total_sales,
+            ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales
+        FROM walmart_sales_enriched
+        GROUP BY
+            Type,
+            CASE
+                WHEN Temperature < 40 THEN 'Cold'
+                WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
+                ELSE 'Hot'
+            END
+    ),
+    ranked_temperature AS (
+        SELECT
+            Type,
+            temperature_group,
+            total_records,
+            avg_temperature,
+            total_sales,
+            avg_weekly_sales,
+            DENSE_RANK() OVER (
+                PARTITION BY Type
+                ORDER BY avg_weekly_sales DESC
+            ) AS temperature_rank
+        FROM temperature_sales
+    )
     SELECT
         Type,
-        CASE
-            WHEN Temperature < 40 THEN 'Cold'
-            WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
-            ELSE 'Hot'
-        END AS temperature_group,
-        COUNT(*) AS total_records,
-        ROUND(AVG(Temperature), 2) AS avg_temperature,
-        ROUND(SUM(Weekly_Sales), 2) AS total_sales,
-        ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales
-    FROM walmart_sales_enriched
-    GROUP BY
-        Type,
-        CASE
-            WHEN Temperature < 40 THEN 'Cold'
-            WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
-            ELSE 'Hot'
-        END
-    ORDER BY Type, avg_weekly_sales DESC
+        temperature_group,
+        total_records,
+        avg_temperature,
+        total_sales,
+        avg_weekly_sales,
+        temperature_rank
+    FROM ranked_temperature
+    ORDER BY Type, temperature_rank
 """)
 
+
 print("\n" + "=" * 90)
-print("CAU 7: Anh huong cua nhiet do den doanh so theo loai cua hang")
+print("CAU 7: Xep hang nhom nhiet do co doanh so cao nhat theo tung loai cua hang")
 print("=" * 90)
 query_7.show(50, truncate=False)
 
 
+
+
 # Cau 8: Xep hang tuan co doanh so cao nhat trong tung nam
+# Muc dich: tim cac tuan cao diem doanh so cua tung nam de ho tro lap ke hoach ton kho va khuyen mai.
 query_8 = spark.sql("""
     WITH weekly_sales AS (
         SELECT
@@ -356,10 +394,17 @@ query_8 = spark.sql("""
     ORDER BY Year, week_rank
 """)
 
+
 print("\n" + "=" * 90)
 print("CAU 8: Top 3 tuan co doanh so cao nhat trong tung nam")
 print("=" * 90)
 query_8.show(50, truncate=False)
+
+print("\n" + "=" * 90)
+print("EXPLAIN CHO CAU 8")
+print("=" * 90)
+query_8.explain(True)
+
 
 # Cau 9: Ty trong doanh thu cua tung Department trong tong doanh thu cua Store
 # Muc dich: xac dinh nhom nganh hang nao dong gop nhieu nhat cho tung cua hang.
