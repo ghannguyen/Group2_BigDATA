@@ -142,3 +142,105 @@ print("=" * 100)
 print("Train rows:", train_df.count())
 print("Test rows:", test_df.count())
 # ============================================================
+# PART 3 - MODEL TRAINING AND EVALUATION - Member 3
+# ============================================================
+
+# RandomForestRegressor duoc dung de du bao Weekly_Sales.
+# Mo hinh nay phu hop vi doanh so ban le co the bi anh huong boi nhieu yeu to
+# nhu cua hang, department, ngay le, mua vu, thoi tiet va khuyen mai.
+rf = RandomForestRegressor(
+    featuresCol="features",
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    numTrees=20,
+    maxDepth=6,
+    maxBins=32,
+    subsamplingRate=0.7,
+    seed=42
+)
+
+# Lay cac stage tien xu ly tu PART 2.
+# Mot so file co the dat ten la type_indexer/type_encoder,
+# mot so file co the dat ten ngan la indexer/encoder.
+indexer_stage = type_indexer if "type_indexer" in globals() else indexer
+encoder_stage = type_encoder if "type_encoder" in globals() else encoder
+
+# Gom pipeline tien xu ly va model vao mot quy trinh chung.
+pipeline = Pipeline(stages=[
+    imputer,
+    indexer_stage,
+    encoder_stage,
+    assembler,
+    rf
+])
+
+print("=" * 100)
+print("PART 3 - TRAIN RANDOM FOREST REGRESSION MODEL")
+print("=" * 100)
+
+# Train model tren tap train da chia o PART 2
+model = pipeline.fit(train_df)
+
+print("Model training completed.")
+
+print("=" * 100)
+print("PREDICTION SAMPLE ON TEST DATA")
+print("=" * 100)
+
+# Du doan tren tap test
+pred = model.transform(test_df)
+
+# In mau ket qua du doan de dua vao bao cao
+pred.select(
+    "Store",
+    "Dept",
+    "Type",
+    "sales_year",
+    "sales_month",
+    "week_of_year",
+    "Weekly_Sales",
+    "prediction"
+).show(30, truncate=False)
+
+print("=" * 100)
+print("MODEL EVALUATION")
+print("=" * 100)
+
+# Danh gia mo hinh bang RegressionEvaluator
+rmse = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="rmse"
+).evaluate(pred)
+
+mae = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="mae"
+).evaluate(pred)
+
+r2 = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="r2"
+).evaluate(pred)
+
+print("RMSE:", round(rmse, 4))
+print("MAE :", round(mae, 4))
+print("R2  :", round(r2, 4))
+
+print("=" * 100)
+print("SAVE MODEL TO HDFS")
+print("=" * 100)
+
+# Luu model len HDFS de chung minh model khong chi chay local
+model.write().overwrite().save(model_output_path)
+
+print("Model saved to:", model_output_path)
+
+print("=" * 100)
+print("DONE - PART 3 COMPLETED")
+print("=" * 100)
+
+input("Nhan Enter de dung Spark...")
+spark.stop()
