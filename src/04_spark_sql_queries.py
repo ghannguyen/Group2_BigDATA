@@ -203,6 +203,163 @@ print("EXPLAIN CHO CAU 4")
 print("=" * 90)
 query_4.explain(True)
 
+# Cau 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam
+query_5 = spark.sql("""
+    WITH yearly_store_sales AS (
+        SELECT
+            Store,
+            Type,
+            Year,
+            ROUND(SUM(Weekly_Sales), 2) AS yearly_sales
+        FROM walmart_sales_enriched
+        GROUP BY Store, Type, Year
+    ),
+    growth_table AS (
+        SELECT
+            Store,
+            Type,
+            Year,
+            yearly_sales,
+            LAG(yearly_sales) OVER (
+                PARTITION BY Store
+                ORDER BY Year
+            ) AS previous_year_sales
+        FROM yearly_store_sales
+    )
+    SELECT
+        Store,
+        Type,
+        Year,
+        yearly_sales,
+        previous_year_sales,
+        ROUND(yearly_sales - previous_year_sales, 2) AS sales_change,
+        ROUND(((yearly_sales - previous_year_sales) / previous_year_sales) * 100, 2) AS growth_rate_percent
+    FROM growth_table
+    WHERE previous_year_sales IS NOT NULL
+    ORDER BY growth_rate_percent DESC
+    LIMIT 5
+""")
+
+print("\n" + "=" * 90)
+print("CAU 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam")
+print("=" * 90)
+query_5.show(50, truncate=False)
+
+
+# Cau 6: Phan tich department co doanh so cao hon trung binh cua chinh cua hang
+query_6 = spark.sql("""
+    WITH dept_store_sales AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            ROUND(SUM(Weekly_Sales), 2) AS dept_total_sales
+        FROM walmart_sales_enriched
+        GROUP BY Store, Type, Dept
+    ),
+    store_avg AS (
+        SELECT
+            Store,
+            ROUND(AVG(dept_total_sales), 2) AS avg_dept_sales_in_store
+        FROM dept_store_sales
+        GROUP BY Store
+    )
+    SELECT
+        d.Store,
+        d.Type,
+        d.Dept,
+        d.dept_total_sales,
+        s.avg_dept_sales_in_store,
+        ROUND(d.dept_total_sales - s.avg_dept_sales_in_store, 2) AS difference_from_store_avg
+    FROM dept_store_sales d
+    JOIN store_avg s
+        ON d.Store = s.Store
+    WHERE d.dept_total_sales > s.avg_dept_sales_in_store
+    ORDER BY difference_from_store_avg DESC
+    LIMIT 10
+""")
+
+print("\n" + "=" * 90)
+print("CAU 6: Department co doanh so cao hon trung binh cua chinh cua hang")
+print("=" * 90)
+query_6.show(50, truncate=False)
+
+
+# Cau 7: Anh huong cua nhiet do den doanh so theo tung loai cua hang
+query_7 = spark.sql("""
+    SELECT
+        Type,
+        CASE
+            WHEN Temperature < 40 THEN 'Cold'
+            WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
+            ELSE 'Hot'
+        END AS temperature_group,
+        COUNT(*) AS total_records,
+        ROUND(AVG(Temperature), 2) AS avg_temperature,
+        ROUND(SUM(Weekly_Sales), 2) AS total_sales,
+        ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales
+    FROM walmart_sales_enriched
+    GROUP BY
+        Type,
+        CASE
+            WHEN Temperature < 40 THEN 'Cold'
+            WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
+            ELSE 'Hot'
+        END
+    ORDER BY Type, avg_weekly_sales DESC
+""")
+
+print("\n" + "=" * 90)
+print("CAU 7: Anh huong cua nhiet do den doanh so theo loai cua hang")
+print("=" * 90)
+query_7.show(50, truncate=False)
+
+
+# Cau 8: Xep hang tuan co doanh so cao nhat trong tung nam
+query_8 = spark.sql("""
+    WITH weekly_sales AS (
+        SELECT
+            Year,
+            WeekOfYear,
+            IsHoliday,
+            ROUND(SUM(Weekly_Sales), 2) AS total_weekly_sales,
+            ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales,
+            COUNT(DISTINCT Store) AS total_stores
+        FROM walmart_sales_enriched
+        GROUP BY Year, WeekOfYear, IsHoliday
+    ),
+    ranked_weeks AS (
+        SELECT
+            Year,
+            WeekOfYear,
+            IsHoliday,
+            total_weekly_sales,
+            avg_weekly_sales,
+            total_stores,
+            DENSE_RANK() OVER (
+                PARTITION BY Year
+                ORDER BY total_weekly_sales DESC
+            ) AS week_rank
+        FROM weekly_sales
+    )
+    SELECT
+        Year,
+        WeekOfYear,
+        IsHoliday,
+        total_weekly_sales,
+        avg_weekly_sales,
+        total_stores,
+        week_rank
+    FROM ranked_weeks
+    WHERE week_rank <= 3
+    ORDER BY Year, week_rank
+""")
+
+print("\n" + "=" * 90)
+print("CAU 8: Top 3 tuan co doanh so cao nhat trong tung nam")
+print("=" * 90)
+query_8.show(50, truncate=False)
+
 # Giai phong cache sau khi chay xong
 df.unpersist()
 
