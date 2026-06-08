@@ -77,3 +77,68 @@ SUM(CASE WHEN Weekly_Sales IS NULL THEN 1 ELSE 0 END) AS Weekly_Sales_null
 FROM ml_data
 """).show(truncate=False)
 # ============================================================
+
+# ============================================================
+# PART 2 - MLLIB PIPELINE PREPROCESSING - Member 2
+# ============================================================
+
+# Chuyen IsHoliday tu boolean thanh numeric 1/0 de mo hinh MLlib co the su dung
+ml_data = ml_data.withColumn(
+    "IsHolidayNum",
+    when(col("IsHoliday") == True, 1.0).otherwise(0.0)
+)
+
+# Cac cot numeric duoc su dung lam feature dau vao
+numeric_cols = [
+    "Store",
+    "Dept",
+    "Size",
+    "IsHolidayNum",
+    "sales_year",
+    "sales_month",
+    "week_of_year",
+    "Temperature",
+    "Fuel_Price",
+    "MarkDown1",
+    "MarkDown2",
+    "MarkDown3",
+    "MarkDown4",
+    "MarkDown5",
+    "CPI",
+    "Unemployment"
+]
+
+# Xu ly missing values cho cac cot numeric bang median
+imputer = Imputer(
+    inputCols=numeric_cols,
+    outputCols=[c + "_imp" for c in numeric_cols]
+).setStrategy("median")
+
+# Ma hoa cot Type A/B/C thanh chi so numeric
+type_indexer = StringIndexer(
+    inputCol="Type",
+    outputCol="TypeIndex",
+    handleInvalid="keep"
+)
+
+# Chuyen TypeIndex thanh vector nhi phan TypeVec
+type_encoder = OneHotEncoder(
+    inputCols=["TypeIndex"],
+    outputCols=["TypeVec"]
+)
+
+# Gom tat ca feature da xu ly thanh mot cot features
+assembler = VectorAssembler(
+    inputCols=[c + "_imp" for c in numeric_cols] + ["TypeVec"],
+    outputCol="features"
+)
+
+# Chia du lieu thanh train/test theo ti le 80/20
+train_df, test_df = ml_data.randomSplit([0.8, 0.2], seed=42)
+
+print("=" * 100)
+print("SPLIT TRAIN / TEST")
+print("=" * 100)
+print("Train rows:", train_df.count())
+print("Test rows:", test_df.count())
+# ============================================================
