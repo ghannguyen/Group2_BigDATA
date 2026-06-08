@@ -6,6 +6,7 @@ spark = SparkSession.builder \
     .appName("Nhom_02_Walmart_Big_Data") \
     .config("spark.ui.port", "4050") \
     .config("spark.sql.shuffle.partitions", "8") \
+    .config("spark.sql.adaptive.enabled", "false") \
     .getOrCreate()
 
 # Giam log cua Spark de ket qua truy van de nhin hon
@@ -360,8 +361,184 @@ print("CAU 8: Top 3 tuan co doanh so cao nhat trong tung nam")
 print("=" * 90)
 query_8.show(50, truncate=False)
 
+# Cau 9: Ty trong doanh thu cua tung Department trong tong doanh thu cua Store
+# Muc dich: xac dinh nhom nganh hang nao dong gop nhieu nhat cho tung cua hang.
+query_9 = spark.sql("""
+    WITH dept_store_sales AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            ROUND(SUM(Weekly_Sales), 2) AS dept_sales
+        FROM walmart_sales_enriched
+        GROUP BY Store, Type, Dept
+    ),
+    store_total_sales AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            dept_sales,
+            SUM(dept_sales) OVER (
+                PARTITION BY Store
+            ) AS store_total_sales
+        FROM dept_store_sales
+    ),
+    ranked_dept AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            dept_sales,
+            store_total_sales,
+            ROUND((dept_sales / store_total_sales) * 100, 2) AS contribution_percent,
+            DENSE_RANK() OVER (
+                PARTITION BY Store
+                ORDER BY dept_sales DESC
+            ) AS dept_rank
+        FROM store_total_sales
+    )
+    SELECT
+        Store,
+        Type,
+        Dept,
+        dept_sales,
+        store_total_sales,
+        contribution_percent,
+        dept_rank
+    FROM ranked_dept
+    WHERE dept_rank <= 3
+    ORDER BY Store, dept_rank
+""")
+
+print("\n" + "=" * 90)
+print("CAU 9: Ty trong doanh thu cua tung Department trong tong doanh thu cua Store")
+print("=" * 90)
+query_9.show(100, truncate=False)
+
+
+# Cau 10: Phat hien Store-Dept co doanh so bat thuong so voi trung binh Department
+# Muc dich: tim cac cua hang co doanh so cua mot Dept cao/thap bat thuong so voi mat bang chung.
+query_10 = spark.sql("""
+    WITH store_dept_sales AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            ROUND(SUM(Weekly_Sales), 2) AS store_dept_sales
+        FROM walmart_sales_enriched
+        GROUP BY Store, Type, Dept
+    ),
+    dept_benchmark AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            store_dept_sales,
+            ROUND(
+                AVG(store_dept_sales) OVER (
+                    PARTITION BY Dept
+                ),
+                2
+            ) AS avg_dept_sales_all_stores
+        FROM store_dept_sales
+    )
+    SELECT
+        Store,
+        Type,
+        Dept,
+        store_dept_sales,
+        avg_dept_sales_all_stores,
+        ROUND(store_dept_sales - avg_dept_sales_all_stores, 2) AS sales_gap,
+        ROUND(
+            ((store_dept_sales - avg_dept_sales_all_stores) / avg_dept_sales_all_stores) * 100,
+            2
+        ) AS gap_percent
+    FROM dept_benchmark
+    WHERE avg_dept_sales_all_stores > 0
+    ORDER BY ABS(gap_percent) DESC
+    LIMIT 20
+""")
+
+print("\n" + "=" * 90)
+print("CAU 10: Phat hien Store-Dept co doanh so bat thuong so voi trung binh Department")
+print("=" * 90)
+query_10.show(50, truncate=False)
+
+
+# Cau 11: Moving Average doanh so theo thang
+# Muc dich: tinh trung binh truot 3 thang de phan tich xu huong doanh so on dinh hon.
+query_11 = spark.sql("""
+    WITH monthly_sales AS (
+        SELECT
+            year,
+            month,
+            ROUND(SUM(Weekly_Sales), 2) AS monthly_sales,
+            ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales,
+            COUNT(*) AS total_records
+        FROM walmart_sales_enriched
+        GROUP BY year, month
+    )
+    SELECT
+        year,
+        month,
+        monthly_sales,
+        avg_weekly_sales,
+        total_records,
+        ROUND(
+            AVG(monthly_sales) OVER (
+                ORDER BY year, month
+                ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            ),
+            2
+        ) AS moving_avg_3_months
+    FROM monthly_sales
+    ORDER BY year, month
+""")
+
+print("\n" + "=" * 90)
+print("CAU 11: Moving Average doanh so theo thang")
+print("=" * 90)
+query_11.show(50, truncate=False)
+
+
+# Cau 12: Phan tich doanh so da chieu bang CUBE
+# Muc dich: tong hop doanh so theo Type, nam va nhom ngay le o nhieu cap do khac nhau.
+query_12 = spark.sql("""
+    SELECT
+        COALESCE(Type, 'ALL_TYPES') AS Type,
+        COALESCE(CAST(year AS STRING), 'ALL_YEARS') AS sales_year,
+        COALESCE(holiday_group, 'ALL_HOLIDAY_GROUPS') AS holiday_group,
+        COUNT(*) AS total_records,
+        COUNT(DISTINCT Store) AS total_stores,
+        ROUND(SUM(Weekly_Sales), 2) AS total_sales,
+        ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales
+    FROM (
+        SELECT
+            Type,
+            year,
+            CASE
+                WHEN IsHoliday = true THEN 'Holiday Week'
+                ELSE 'Normal Week'
+            END AS holiday_group,
+            Store,
+            Weekly_Sales
+        FROM walmart_sales_enriched
+    ) t
+    GROUP BY CUBE(Type, year, holiday_group)
+    ORDER BY Type, sales_year, holiday_group
+""")
+
+print("\n" + "=" * 90)
+print("CAU 12: Phan tich doanh so da chieu bang CUBE")
+print("=" * 90)
+query_12.show(100, truncate=False)
+
+print("\n" + "=" * 90)
+print("EXPLAIN CHO CAU 12")
+print("=" * 90)
+query_12.explain(True)
 # Giai phong cache sau khi chay xong
 df.unpersist()
-
 input("Nhan Enter de dung Spark...")
 spark.stop()
