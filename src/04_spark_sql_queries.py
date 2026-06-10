@@ -230,7 +230,7 @@ query_4 = spark.sql("""
                 ELSE 'High Fuel Price'
             END AS fuel_group,
             CASE
-                WHEN CPI < 150 THEN 'Low CPspark-submit src\04_spark_sql_queries.pyI'
+                WHEN CPI < 150 THEN 'Low CPI'
                 WHEN CPI BETWEEN 150 AND 220 THEN 'Medium CPI'
                 ELSE 'High CPI'
             END AS cpi_group,
