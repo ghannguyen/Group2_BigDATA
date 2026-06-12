@@ -340,6 +340,38 @@ print("=" * 100)
 plt.close()
 
 print("Zoomed visualization saved to:", output_zoom_path)
+# ------------------------------------------------------------
+# Figure 3: Residual distribution chart
+# ------------------------------------------------------------
 
+plot_df["residual"] = plot_df["prediction"] - plot_df["Weekly_Sales"]
+
+plt.figure(figsize=(8, 6))
+
+sns.histplot(
+    data=plot_df,
+    x="residual",
+    bins=50,
+    kde=True
+)
+
+plt.axvline(
+    x=0,
+    color="red",
+    linestyle="--",
+    label="Zero Error"
+)
+
+plt.title("Residual Distribution - Random Forest")
+plt.xlabel("Prediction Error (Predicted - Actual)")
+plt.ylabel("Frequency")
+plt.legend()
+plt.tight_layout()
+
+output_residual_path = f"{output_dir}/rf_residual_distribution_weekly_sales.png"
+plt.savefig(output_residual_path, dpi=300)
+plt.close()
+
+print("Residual distribution visualization saved to:", output_residual_path)
 input("Nhan Enter de dung Spark...")
 spark.stop()
