@@ -338,3 +338,100 @@ preprocessing_model.write().overwrite().save(preprocess_model_path)
 
 print("Prepared features saved to:", prepared_feature_path)
 print("Preprocessing model saved to:", preprocess_model_path)
+
+# ============================================================
+# PART 3 - KMEANS TRAINING, EVALUATION AND BUSINESS INTERPRETATION - Member 3
+# ============================================================
+
+print("=" * 100)
+print("PART 3 - TRAIN KMEANS STORE OPERATIONAL CLUSTERING MODEL")
+print("=" * 100)
+
+# Doc lai output PART 2 tu HDFS de chung minh PART 3 nhan du lieu da xu ly
+kmeans_data = spark.read.parquet(prepared_feature_path)
+
+# Chon k=4 de chia store thanh 4 nhom van hanh de dien giai trong bao cao
+kmeans = KMeans(
+    featuresCol="features",
+    predictionCol="cluster",
+    k=4,
+    seed=42
+)
+
+kmeans_model = kmeans.fit(kmeans_data)
+clustered = kmeans_model.transform(kmeans_data)
+clustered.createOrReplaceTempView("store_cluster_results")
+
+print("KMeans training completed.")
+
+print("=" * 100)
+print("STORE CLUSTERING SAMPLE")
+print("=" * 100)
+
+clustered.select(
+    "Store",
+    "Type",
+    "Size",
+    "total_departments",
+    "avg_store_week_sales",
+    "sales_per_size",
+    "coefficient_variation",
+    "avg_markdown",
+    "holiday_sales_ratio",
+    "cluster"
+).orderBy("cluster", "Store").show(45, truncate=False)
+
+print("=" * 100)
+print("KMEANS EVALUATION")
+print("=" * 100)
+
+evaluator = ClusteringEvaluator(
+    featuresCol="features",
+    predictionCol="cluster",
+    metricName="silhouette",
+    distanceMeasure="squaredEuclidean"
+)
+
+silhouette = evaluator.evaluate(clustered)
+print("Silhouette Score:", round(silhouette, 4))
+
+print("=" * 100)
+print("CLUSTER SUMMARY FOR BUSINESS INTERPRETATION")
+print("=" * 100)
+
+cluster_summary = spark.sql("""
+    SELECT
+        cluster,
+        COUNT(*) AS total_stores,
+        ROUND(AVG(Size), 2) AS avg_size,
+        ROUND(AVG(total_departments), 2) AS avg_total_departments,
+        ROUND(AVG(avg_store_week_sales), 2) AS avg_store_week_sales,
+        ROUND(AVG(sales_per_size), 4) AS avg_sales_per_size,
+        ROUND(AVG(coefficient_variation), 4) AS avg_coefficient_variation,
+        ROUND(AVG(avg_markdown), 2) AS avg_markdown,
+        ROUND(AVG(holiday_sales_ratio), 4) AS avg_holiday_sales_ratio
+    FROM store_cluster_results
+    GROUP BY cluster
+    ORDER BY cluster
+""")
+
+cluster_summary.show(truncate=False)
+
+print("=" * 100)
+print("SAVE CLUSTER RESULTS AND MODEL TO HDFS")
+print("=" * 100)
+
+clustered.write.mode("overwrite").parquet(cluster_result_path)
+kmeans_model.write().overwrite().save(kmeans_model_path)
+
+print("Cluster results saved to:", cluster_result_path)
+print("KMeans model saved to:", kmeans_model_path)
+
+print("=" * 100)
+print("DONE - STORE OPERATIONAL CLUSTERING EXTENSION COMPLETED")
+print("=" * 100)
+
+df.unpersist()
+
+input("Nhan Enter de dung Spark...")
+spark.stop()
