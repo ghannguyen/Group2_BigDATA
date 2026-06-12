@@ -1,5 +1,8 @@
+import os
+
 from pyspark.sql import SparkSession
 from pyspark.storagelevel import StorageLevel
+
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import (
     Imputer,
@@ -11,47 +14,66 @@ from pyspark.ml.feature import (
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
 
+
 # ============================================================
-# SPARK MLLIB EXTENSION - STORE CLUSTERING BY KMEANS
+# SPARK MLLIB EXTENSION - STORE OPERATIONAL CLUSTERING BY KMEANS
 # Dataset: Walmart Store Sales
-# Input: processed Parquet on HDFS
-# Output: store-level features, clustered results, KMeans model on HDFS
+# Input : processed Parquet on HDFS
+# Output: store-level features, prepared features, clustered results,
+#         preprocessing pipeline, KMeans model, visualization images
 # ============================================================
+
+# Matplotlib chi dung de truc quan hoa ket qua cuoi cung.
+# Neu may chua cai matplotlib, phan Spark MLlib van chay binh thuong,
+# chi bo qua buoc ve bieu do.
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except Exception:
+    HAS_MATPLOTLIB = False
+
 
 spark = (
     SparkSession.builder
-    .appName("Nhom_02_Walmart_MLlib_Store_Clustering")
+    .appName("Nhom_02_Walmart_MLlib_Store_Operational_Clustering")
     .config("spark.ui.port", "4050")
     .config("spark.sql.shuffle.partitions", "8")
     .config("spark.sql.adaptive.enabled", "false")
     .getOrCreate()
 )
 
-# Giam log Spark de ket qua terminal de nhin hon
 spark.sparkContext.setLogLevel("ERROR")
 
-# Tat ca du lieu dau vao/dau ra deu nam tren HDFS, khong doc file CSV local
+
+# Tat ca du lieu dau vao/dau ra chinh deu nam tren HDFS
 processed_path = "hdfs://localhost:9000/bigdata/walmart/processed/walmart_sales_enriched"
-store_feature_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_level_features"
-prepared_feature_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_clustering_prepared"
-cluster_result_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_cluster_results"
-preprocess_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_store_preprocess_pipeline"
-kmeans_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_store_clustering"
+
+store_feature_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_operational_features"
+prepared_feature_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_operational_clustering_prepared"
+cluster_result_path = "hdfs://localhost:9000/bigdata/walmart/processed/store_operational_cluster_results"
+
+preprocess_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_store_operational_preprocess_pipeline"
+kmeans_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_store_operational_clustering"
+
+# Thu muc local de luu hinh truc quan hoa dua vao bao cao
+visualization_dir = "outputs/kmeans_store_operational_clustering"
+
 
 print("=" * 100)
-print("SPARK MLLIB EXTENSION - STORE CLUSTERING BY KMEANS")
+print("SPARK MLLIB EXTENSION - STORE OPERATIONAL CLUSTERING BY KMEANS")
 print("=" * 100)
 
 
 # ============================================================
-# PART 1 - STORE LEVEL DATA PREPARATION - Member 1
+# PART 1 - STORE OPERATIONAL FEATURE ENGINEERING - Member 1
 # ============================================================
 
 print("=" * 100)
 print("PART 1 - READ PROCESSED DATA FROM HDFS")
 print("=" * 100)
 
-# Doc bang processed da join train.csv, features.csv, stores.csv tu HDFS
 df = spark.read.parquet(processed_path)
 df.createOrReplaceTempView("walmart_sales_enriched")
 
@@ -60,16 +82,25 @@ print("Rows:", df.count())
 print("Columns:", len(df.columns))
 df.printSchema()
 
-# Persist bang processed vi PART 1 se tinh nhieu chi so tong hop tu bang nay
+# Persist bang processed vi PART 1 can tinh nhieu chi so tong hop
 df.persist(StorageLevel.MEMORY_AND_DISK)
 df.count()
 
+
 print("=" * 100)
-print("PART 1 - CREATE STORE LEVEL FEATURES")
+print("PART 1 - CREATE STORE OPERATIONAL FEATURES")
 print("=" * 100)
 
-# KMeans phan cum theo Store, nen can dua du lieu ve cap cua hang.
-# Moi dong trong bang store_level_features dai dien cho 1 cua hang Walmart.
+# Muc tieu:
+# KMeans phan cum theo cua hang, nen du lieu phai duoc dua ve cap Store.
+# Moi dong trong store_operational_features dai dien cho 1 cua hang Walmart.
+#
+# Bo feature duoc rut gon theo 4 nhom y nghia:
+# 1. Quy mo: Size, total_departments
+# 2. Hieu qua doanh so: avg_store_week_sales, sales_per_size
+# 3. Do on dinh: coefficient_variation
+# 4. Khuyen mai va ngay le: avg_markdown, holiday_sales_ratio
+
 store_features = spark.sql("""
     WITH base AS (
         SELECT
@@ -80,15 +111,11 @@ store_features = spark.sql("""
             Dept,
             Weekly_Sales,
             IsHoliday,
-            Temperature,
-            Fuel_Price,
             COALESCE(MarkDown1, 0) AS MarkDown1,
             COALESCE(MarkDown2, 0) AS MarkDown2,
             COALESCE(MarkDown3, 0) AS MarkDown3,
             COALESCE(MarkDown4, 0) AS MarkDown4,
             COALESCE(MarkDown5, 0) AS MarkDown5,
-            CPI,
-            Unemployment,
             COALESCE(MarkDown1, 0)
             + COALESCE(MarkDown2, 0)
             + COALESCE(MarkDown3, 0)
@@ -114,7 +141,6 @@ store_features = spark.sql("""
         SELECT
             Store,
             ROUND(AVG(store_week_sales), 2) AS avg_store_week_sales,
-            ROUND(STDDEV(store_week_sales), 2) AS std_store_week_sales,
             ROUND(
                 STDDEV(store_week_sales) / AVG(store_week_sales),
                 4
@@ -128,32 +154,14 @@ store_features = spark.sql("""
             Store,
             Type,
             Size,
-
-            COUNT(*) AS total_records,
             COUNT(DISTINCT Dept) AS total_departments,
-            COUNT(DISTINCT Date) AS total_weeks,
-
             ROUND(SUM(Weekly_Sales), 2) AS total_sales,
-            ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales,
-            ROUND(MIN(Weekly_Sales), 2) AS min_weekly_sales,
-            ROUND(MAX(Weekly_Sales), 2) AS max_weekly_sales,
-
+            ROUND(SUM(Weekly_Sales) / Size, 4) AS sales_per_size,
             ROUND(AVG(markdown_total), 2) AS avg_markdown,
-            ROUND(
-                SUM(CASE WHEN markdown_total > 0 THEN 1 ELSE 0 END) / COUNT(*),
-                4
-            ) AS markdown_record_ratio,
-
             ROUND(
                 SUM(CASE WHEN IsHoliday = true THEN Weekly_Sales ELSE 0 END) / SUM(Weekly_Sales),
                 4
-            ) AS holiday_sales_ratio,
-
-            ROUND(AVG(Temperature), 2) AS avg_temperature,
-            ROUND(AVG(Fuel_Price), 3) AS avg_fuel_price,
-            ROUND(AVG(CPI), 3) AS avg_cpi,
-            ROUND(AVG(Unemployment), 3) AS avg_unemployment
-
+            ) AS holiday_sales_ratio
         FROM base
         GROUP BY Store, Type, Size
     )
@@ -162,48 +170,34 @@ store_features = spark.sql("""
         s.Store,
         s.Type,
         s.Size,
-
-        s.total_records,
         s.total_departments,
-        s.total_weeks,
-
         s.total_sales,
-        s.avg_weekly_sales,
-        s.min_weekly_sales,
-        s.max_weekly_sales,
-
         v.avg_store_week_sales,
-        v.std_store_week_sales,
+        s.sales_per_size,
         v.coefficient_variation,
-
         s.avg_markdown,
-        s.markdown_record_ratio,
-        s.holiday_sales_ratio,
-
-        s.avg_temperature,
-        s.avg_fuel_price,
-        s.avg_cpi,
-        s.avg_unemployment
-
+        s.holiday_sales_ratio
     FROM store_summary s
     LEFT JOIN store_volatility v
         ON s.Store = v.Store
     ORDER BY s.Store
 """)
 
-store_features.createOrReplaceTempView("store_level_features")
+store_features.createOrReplaceTempView("store_operational_features")
 
 print("Store-level rows:", store_features.count())
 print("Store-level columns:", len(store_features.columns))
 store_features.printSchema()
 
 print("=" * 100)
-print("STORE LEVEL FEATURE SAMPLE")
+print("STORE OPERATIONAL FEATURE SAMPLE")
 print("=" * 100)
-store_features.show(20, truncate=False)
+
+store_features.show(45, truncate=False)
+
 
 print("=" * 100)
-print("CHECK MISSING VALUES IN STORE LEVEL FEATURES")
+print("CHECK MISSING VALUES IN STORE OPERATIONAL FEATURES")
 print("=" * 100)
 
 spark.sql("""
@@ -211,25 +205,23 @@ spark.sql("""
         SUM(CASE WHEN Store IS NULL THEN 1 ELSE 0 END) AS Store_null,
         SUM(CASE WHEN Type IS NULL THEN 1 ELSE 0 END) AS Type_null,
         SUM(CASE WHEN Size IS NULL THEN 1 ELSE 0 END) AS Size_null,
+        SUM(CASE WHEN total_departments IS NULL THEN 1 ELSE 0 END) AS total_departments_null,
         SUM(CASE WHEN total_sales IS NULL THEN 1 ELSE 0 END) AS total_sales_null,
-        SUM(CASE WHEN avg_weekly_sales IS NULL THEN 1 ELSE 0 END) AS avg_weekly_sales_null,
-        SUM(CASE WHEN std_store_week_sales IS NULL THEN 1 ELSE 0 END) AS std_store_week_sales_null,
+        SUM(CASE WHEN avg_store_week_sales IS NULL THEN 1 ELSE 0 END) AS avg_store_week_sales_null,
+        SUM(CASE WHEN sales_per_size IS NULL THEN 1 ELSE 0 END) AS sales_per_size_null,
         SUM(CASE WHEN coefficient_variation IS NULL THEN 1 ELSE 0 END) AS coefficient_variation_null,
         SUM(CASE WHEN avg_markdown IS NULL THEN 1 ELSE 0 END) AS avg_markdown_null,
-        SUM(CASE WHEN markdown_record_ratio IS NULL THEN 1 ELSE 0 END) AS markdown_record_ratio_null,
-        SUM(CASE WHEN holiday_sales_ratio IS NULL THEN 1 ELSE 0 END) AS holiday_sales_ratio_null,
-        SUM(CASE WHEN avg_temperature IS NULL THEN 1 ELSE 0 END) AS avg_temperature_null,
-        SUM(CASE WHEN avg_fuel_price IS NULL THEN 1 ELSE 0 END) AS avg_fuel_price_null,
-        SUM(CASE WHEN avg_cpi IS NULL THEN 1 ELSE 0 END) AS avg_cpi_null,
-        SUM(CASE WHEN avg_unemployment IS NULL THEN 1 ELSE 0 END) AS avg_unemployment_null
-    FROM store_level_features
+        SUM(CASE WHEN holiday_sales_ratio IS NULL THEN 1 ELSE 0 END) AS holiday_sales_ratio_null
+    FROM store_operational_features
 """).show(truncate=False)
 
+
 print("=" * 100)
-print("SAVE STORE LEVEL FEATURES TO HDFS")
+print("SAVE STORE OPERATIONAL FEATURES TO HDFS")
 print("=" * 100)
+
 store_features.write.mode("overwrite").parquet(store_feature_path)
-print("Store-level features saved to:", store_feature_path)
+print("Store operational features saved to:", store_feature_path)
 
 
 # ============================================================
@@ -240,42 +232,33 @@ print("=" * 100)
 print("PART 2 - KMEANS PREPROCESSING PIPELINE")
 print("=" * 100)
 
-# Doc lai store-level features tu HDFS de chung minh PART 2 nhan output cua PART 1
+# Doc lai output PART 1 tu HDFS de chung minh flow xu ly theo tung buoc
 store_df = spark.read.parquet(store_feature_path)
-store_df.createOrReplaceTempView("store_level_features_from_hdfs")
+store_df.createOrReplaceTempView("store_operational_features_from_hdfs")
 
 print("Store feature path:", store_feature_path)
 print("Store feature rows:", store_df.count())
 print("Store feature columns:", len(store_df.columns))
+store_df.printSchema()
 
-# Cac cot so dung cho KMeans.
-# KMeans dua tren khoang cach, nen can StandardScaler de chuan hoa scale.
+# Bo cot so rut gon, co y nghia kinh doanh va de dien giai
 numeric_cols = [
     "Size",
-    "total_records",
     "total_departments",
-    "total_weeks",
-    "total_sales",
-    "avg_weekly_sales",
-    "min_weekly_sales",
-    "max_weekly_sales",
     "avg_store_week_sales",
-    "std_store_week_sales",
+    "sales_per_size",
     "coefficient_variation",
     "avg_markdown",
-    "markdown_record_ratio",
-    "holiday_sales_ratio",
-    "avg_temperature",
-    "avg_fuel_price",
-    "avg_cpi",
-    "avg_unemployment"
+    "holiday_sales_ratio"
 ]
 
+# Xu ly missing values bang median
 imputer = Imputer(
     inputCols=numeric_cols,
     outputCols=[c + "_imp" for c in numeric_cols]
 ).setStrategy("median")
 
+# Ma hoa cot Type A/B/C
 type_indexer = StringIndexer(
     inputCol="Type",
     outputCol="TypeIndex",
@@ -287,11 +270,13 @@ type_encoder = OneHotEncoder(
     outputCols=["TypeVec"]
 )
 
+# Gom feature so va TypeVec thanh vector
 assembler = VectorAssembler(
     inputCols=[c + "_imp" for c in numeric_cols] + ["TypeVec"],
     outputCol="raw_features"
 )
 
+# KMeans dua tren khoang cach, nen can chuan hoa thang do
 scaler = StandardScaler(
     inputCol="raw_features",
     outputCol="features",
@@ -314,20 +299,28 @@ print("=" * 100)
 print("PREPARED DATA SAMPLE FOR KMEANS")
 print("=" * 100)
 
+# Khong in cot features vi day la vector dai, kho dua vao bao cao.
+# Cot features van ton tai trong prepared_data va duoc dung cho KMeans o PART 3.
 prepared_data.select(
     "Store",
     "Type",
     "Size",
-    "total_sales",
-    "avg_weekly_sales",
+    "total_departments",
+    "avg_store_week_sales",
+    "sales_per_size",
     "coefficient_variation",
     "avg_markdown",
-    "holiday_sales_ratio",
-    "features"
-).show(20, truncate=False)
+    "holiday_sales_ratio"
+).show(45, truncate=False)
 
 print("Prepared data rows:", prepared_data.count())
 print("Prepared data columns:", len(prepared_data.columns))
+
+print("=" * 100)
+print("PREPARED DATA SCHEMA")
+print("=" * 100)
+prepared_data.printSchema()
+
 
 print("=" * 100)
 print("SAVE PREPARED FEATURES AND PREPROCESSING MODEL TO HDFS")
@@ -338,6 +331,7 @@ preprocessing_model.write().overwrite().save(preprocess_model_path)
 
 print("Prepared features saved to:", prepared_feature_path)
 print("Preprocessing model saved to:", preprocess_model_path)
+
 
 # ============================================================
 # PART 3 - KMEANS TRAINING, EVALUATION AND BUSINESS INTERPRETATION - Member 3
@@ -350,7 +344,6 @@ print("=" * 100)
 # Doc lai output PART 2 tu HDFS de chung minh PART 3 nhan du lieu da xu ly
 kmeans_data = spark.read.parquet(prepared_feature_path)
 
-# Chon k=4 de chia store thanh 4 nhom van hanh de dien giai trong bao cao
 kmeans = KMeans(
     featuresCol="features",
     predictionCol="cluster",
@@ -363,6 +356,7 @@ clustered = kmeans_model.transform(kmeans_data)
 clustered.createOrReplaceTempView("store_cluster_results")
 
 print("KMeans training completed.")
+
 
 print("=" * 100)
 print("STORE CLUSTERING SAMPLE")
@@ -381,6 +375,7 @@ clustered.select(
     "cluster"
 ).orderBy("cluster", "Store").show(45, truncate=False)
 
+
 print("=" * 100)
 print("KMEANS EVALUATION")
 print("=" * 100)
@@ -394,6 +389,7 @@ evaluator = ClusteringEvaluator(
 
 silhouette = evaluator.evaluate(clustered)
 print("Silhouette Score:", round(silhouette, 4))
+
 
 print("=" * 100)
 print("CLUSTER SUMMARY FOR BUSINESS INTERPRETATION")
@@ -416,6 +412,81 @@ cluster_summary = spark.sql("""
 """)
 
 cluster_summary.show(truncate=False)
+
+
+# ============================================================
+# PART 4 - VISUALIZATION FOR REPORT - Member 3
+# ============================================================
+
+print("=" * 100)
+print("PART 4 - VISUALIZATION FOR REPORT")
+print("=" * 100)
+
+
+def save_bar_chart(rows, value_col, title, xlabel, ylabel, file_name):
+    labels = [str(row["cluster"]) for row in rows]
+    values = [row[value_col] for row in rows]
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(labels, values)
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+
+    output_path = os.path.join(visualization_dir, file_name)
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+    print("Saved chart:", os.path.abspath(output_path))
+
+
+if HAS_MATPLOTLIB:
+    os.makedirs(visualization_dir, exist_ok=True)
+    summary_rows = cluster_summary.collect()
+
+    save_bar_chart(
+        summary_rows,
+        "total_stores",
+        "Number of stores by cluster",
+        "Cluster",
+        "Total stores",
+        "cluster_total_stores.png"
+    )
+
+    save_bar_chart(
+        summary_rows,
+        "avg_store_week_sales",
+        "Average weekly store sales by cluster",
+        "Cluster",
+        "Average weekly store sales",
+        "cluster_avg_store_week_sales.png"
+    )
+
+    save_bar_chart(
+        summary_rows,
+        "avg_sales_per_size",
+        "Average sales per size by cluster",
+        "Cluster",
+        "Average sales per size",
+        "cluster_avg_sales_per_size.png"
+    )
+
+    save_bar_chart(
+        summary_rows,
+        "avg_coefficient_variation",
+        "Average sales volatility by cluster",
+        "Cluster",
+        "Average coefficient variation",
+        "cluster_avg_coefficient_variation.png"
+    )
+
+    print("Visualization folder:", os.path.abspath(visualization_dir))
+else:
+    print("Matplotlib is not installed. Skip visualization.")
+    print("To enable charts, run:")
+    print(r'& "C:\Users\acer\AppData\Local\Programs\Python\Python314\python.exe" -m pip install matplotlib')
+
 
 print("=" * 100)
 print("SAVE CLUSTER RESULTS AND MODEL TO HDFS")
