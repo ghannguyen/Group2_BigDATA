@@ -209,3 +209,103 @@ store_features.write.mode("overwrite").parquet(store_feature_path)
 
 print("Store operational features saved to:", store_feature_path)
 
+
+# ============================================================
+# PART 2 - KMEANS PREPROCESSING PIPELINE - Member 2
+# ============================================================
+
+print("=" * 100)
+print("PART 2 - KMEANS PREPROCESSING PIPELINE")
+print("=" * 100)
+
+# Doc lai output PART 1 tu HDFS de chung minh flow lam viec tuan tu
+store_df = spark.read.parquet(store_feature_path)
+store_df.createOrReplaceTempView("store_operational_features_from_hdfs")
+
+print("Store feature path:", store_feature_path)
+print("Store feature rows:", store_df.count())
+print("Store feature columns:", len(store_df.columns))
+store_df.printSchema()
+
+# Bo cot so rut gon va co y nghia kinh doanh ro rang cho KMeans
+numeric_cols = [
+    "Size",
+    "total_departments",
+    "avg_store_week_sales",
+    "sales_per_size",
+    "coefficient_variation",
+    "avg_markdown",
+    "holiday_sales_ratio"
+]
+
+# Xu ly missing values bang median
+imputer = Imputer(
+    inputCols=numeric_cols,
+    outputCols=[c + "_imp" for c in numeric_cols]
+).setStrategy("median")
+
+# Ma hoa Type A/B/C
+type_indexer = StringIndexer(
+    inputCol="Type",
+    outputCol="TypeIndex",
+    handleInvalid="keep"
+)
+
+type_encoder = OneHotEncoder(
+    inputCols=["TypeIndex"],
+    outputCols=["TypeVec"]
+)
+
+# Gom feature so va TypeVec thanh raw_features
+assembler = VectorAssembler(
+    inputCols=[c + "_imp" for c in numeric_cols] + ["TypeVec"],
+    outputCol="raw_features"
+)
+
+# KMeans dua tren khoang cach nen can StandardScaler
+scaler = StandardScaler(
+    inputCol="raw_features",
+    outputCol="features",
+    withStd=True,
+    withMean=True
+)
+
+preprocessing_pipeline = Pipeline(stages=[
+    imputer,
+    type_indexer,
+    type_encoder,
+    assembler,
+    scaler
+])
+
+preprocessing_model = preprocessing_pipeline.fit(store_df)
+prepared_data = preprocessing_model.transform(store_df)
+
+print("=" * 100)
+print("PREPARED DATA SAMPLE FOR KMEANS")
+print("=" * 100)
+
+prepared_data.select(
+    "Store",
+    "Type",
+    "Size",
+    "total_departments",
+    "avg_store_week_sales",
+    "sales_per_size",
+    "coefficient_variation",
+    "avg_markdown",
+    "holiday_sales_ratio",
+).show(45, truncate=False)
+
+print("Prepared data rows:", prepared_data.count())
+print("Prepared data columns:", len(prepared_data.columns))
+
+print("=" * 100)
+print("SAVE PREPARED FEATURES AND PREPROCESSING MODEL TO HDFS")
+print("=" * 100)
+
+prepared_data.write.mode("overwrite").parquet(prepared_feature_path)
+preprocessing_model.write().overwrite().save(preprocess_model_path)
+
+print("Prepared features saved to:", prepared_feature_path)
+print("Preprocessing model saved to:", preprocess_model_path)
