@@ -122,126 +122,24 @@ if __name__ == "__main__":
     test.createOrReplaceTempView("test")
 
     print("=" * 100)
-    print("CREATING walmart_sales_enriched BY SPARK SQL JOIN")
+    print("TEMP VIEWS CREATED SUCCESSFULLY")
     print("=" * 100)
 
-    walmart_sales_enriched = spark.sql("""
-        SELECT
-            t.Store,
-            t.Dept,
-            CAST(t.Date AS DATE) AS Date,
-            CAST(t.Weekly_Sales AS DOUBLE) AS Weekly_Sales,
-            t.IsHoliday,
-
-            TRY_CAST(f.Temperature AS DOUBLE) AS Temperature,
-            TRY_CAST(f.Fuel_Price AS DOUBLE) AS Fuel_Price,
-
-            COALESCE(TRY_CAST(f.MarkDown1 AS DOUBLE), 0.0) AS MarkDown1,
-            COALESCE(TRY_CAST(f.MarkDown2 AS DOUBLE), 0.0) AS MarkDown2,
-            COALESCE(TRY_CAST(f.MarkDown3 AS DOUBLE), 0.0) AS MarkDown3,
-            COALESCE(TRY_CAST(f.MarkDown4 AS DOUBLE), 0.0) AS MarkDown4,
-            COALESCE(TRY_CAST(f.MarkDown5 AS DOUBLE), 0.0) AS MarkDown5,
-
-            TRY_CAST(f.CPI AS DOUBLE) AS CPI,
-            TRY_CAST(f.Unemployment AS DOUBLE) AS Unemployment,
-
-            s.Type,
-            CAST(s.Size AS INT) AS Size,
-
-            YEAR(CAST(t.Date AS DATE)) AS year,
-            MONTH(CAST(t.Date AS DATE)) AS month,
-            WEEKOFYEAR(CAST(t.Date AS DATE)) AS week_of_year,
-
-            COALESCE(TRY_CAST(f.MarkDown1 AS DOUBLE), 0.0)
-            + COALESCE(TRY_CAST(f.MarkDown2 AS DOUBLE), 0.0)
-            + COALESCE(TRY_CAST(f.MarkDown3 AS DOUBLE), 0.0)
-            + COALESCE(TRY_CAST(f.MarkDown4 AS DOUBLE), 0.0)
-            + COALESCE(TRY_CAST(f.MarkDown5 AS DOUBLE), 0.0) AS markdown_total
-
-        FROM train t
-        LEFT JOIN features f
-            ON t.Store = f.Store
-            AND t.Date = f.Date
-        LEFT JOIN stores s
-            ON t.Store = s.Store
-    """)
-
-    walmart_sales_enriched.createOrReplaceTempView("walmart_sales_enriched")
-
-    enriched_rows = walmart_sales_enriched.count()
-    enriched_cols = len(walmart_sales_enriched.columns)
+    print("Available views:")
+    print("- train")
+    print("- features")
+    print("- stores")
+    print("- test")
 
     print("=" * 100)
-    print("RESULT AFTER JOIN")
-    print("=" * 100)
-    print(f"So dong sau JOIN: {enriched_rows}")
-    print(f"So cot sau JOIN: {enriched_cols}")
-
-    print("\nSchema cua walmart_sales_enriched:")
-    walmart_sales_enriched.printSchema()
-
-    print("\n10 dong dau tien cua walmart_sales_enriched:")
-    walmart_sales_enriched.show(10, truncate=False)
-
-    print("=" * 100)
-    print("CHECK REQUIREMENT: >100,000 RECORDS AND >10 FEATURES")
+    print("DATA READING AND EXPLORATION COMPLETED")
     print("=" * 100)
 
-    if enriched_rows > 100000 and enriched_cols > 10:
-        print("DAT YEU CAU.")
-        print(f"Dataset sau JOIN co {enriched_rows} records va {enriched_cols} features.")
-    else:
-        print("CHUA DAT YEU CAU.")
-        print(f"Dataset sau JOIN co {enriched_rows} records va {enriched_cols} features.")
-
-    print("=" * 100)
-    print("CHECK MISSING VALUES AFTER JOIN")
-    print("=" * 100)
-
-    missing_query_parts = []
-    for col_name in walmart_sales_enriched.columns:
-        missing_query_parts.append(
-            f"SUM(CASE WHEN `{col_name}` IS NULL THEN 1 ELSE 0 END) AS `{col_name}`"
-        )
-
-    missing_query = f"""
-    SELECT
-        {", ".join(missing_query_parts)}
-    FROM walmart_sales_enriched
-    """
-
-    spark.sql(missing_query).show(truncate=False)
-
-    print("=" * 100)
-    print("SUMMARY TABLE FOR REPORT")
-    print("=" * 100)
-
-    summary = spark.sql(f"""
-        SELECT 'train.csv' AS file_name, COUNT(*) AS rows, {len(train.columns)} AS columns FROM train
-        UNION ALL
-        SELECT 'features.csv' AS file_name, COUNT(*) AS rows, {len(features.columns)} AS columns FROM features
-        UNION ALL
-        SELECT 'stores.csv' AS file_name, COUNT(*) AS rows, {len(stores.columns)} AS columns FROM stores
-        UNION ALL
-        SELECT 'test.csv' AS file_name, COUNT(*) AS rows, {len(test.columns)} AS columns FROM test
-        UNION ALL
-        SELECT 'walmart_sales_enriched' AS file_name, COUNT(*) AS rows, {len(walmart_sales_enriched.columns)} AS columns FROM walmart_sales_enriched
-    """)
-
-    summary.show(truncate=False)
-
-    print("=" * 100)
-    print("WRITE walmart_sales_enriched TO HDFS AS PARQUET")
-    print("=" * 100)
-
-    (
-        walmart_sales_enriched
-        .write
-        .mode("overwrite")
-        .parquet(HDFS_PROCESSED_PATH)
-    )
-
-    print(f"Saved successfully to: {HDFS_PROCESSED_PATH}")
+    print("Summary:")
+    print(f"train.csv    : {train.count()} rows | {len(train.columns)} columns")
+    print(f"features.csv : {features.count()} rows | {len(features.columns)} columns")
+    print(f"stores.csv   : {stores.count()} rows | {len(stores.columns)} columns")
+    print(f"test.csv     : {test.count()} rows | {len(test.columns)} columns")
 
     print("=" * 100)
     print("DONE")
