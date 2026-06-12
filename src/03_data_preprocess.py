@@ -1,14 +1,38 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, to_date, year, month, weekofyear, sum as spark_sum
+from pyspark.sql.functions import (
+    col,
+    to_date,
+    year,
+    month,
+    weekofyear,
+    sum as spark_sum,
+    coalesce,
+    lit
+)
 
-# Create Spark session and connect to HDFS
-spark = SparkSession.builder \
-    .appName("Walmart_Preprocess") \
-    .config("spark.hadoop.fs.defaultFS", "hdfs://localhost:9000") \
+# ============================================================
+# WALMART DATA PREPROCESSING PIPELINE
+# Input  : Raw CSV files on HDFS
+# Output : walmart_sales_enriched (Parquet on HDFS)
+# ============================================================
+
+spark = (
+    SparkSession.builder
+    .appName("Walmart_Preprocess")
+    .config("spark.hadoop.fs.defaultFS", "hdfs://localhost:9000")
     .getOrCreate()
+)
 
-# 1. Read raw CSV files from HDFS
-# nullValue="NA" helps Spark understand NA as missing value
+spark.sparkContext.setLogLevel("ERROR")
+
+print("=" * 100)
+print("DATA PREPROCESSING PIPELINE")
+print("=" * 100)
+
+# ============================================================
+# 1. READ RAW DATA FROM HDFS
+# ============================================================
+
 base_path = "hdfs://localhost:9000/bigdata/walmart/raw"
 
 train = spark.read.csv(
@@ -32,26 +56,78 @@ stores = spark.read.csv(
     nullValue="NA"
 )
 
-# 2. Print raw dataset shape
-print("===== RAW DATASET SHAPE =====")
+print("=" * 100)
+print("RAW DATASET SHAPE")
+print("=" * 100)
+
 print("train rows:", train.count(), "| columns:", len(train.columns))
 print("features rows:", features.count(), "| columns:", len(features.columns))
 print("stores rows:", stores.count(), "| columns:", len(stores.columns))
 
-# 3. Join datasets
-# train is the main table because it contains Weekly_Sales
-# Join train with features by Store, Date, IsHoliday
-# Join with stores by Store
-df = train.join(features, ["Store", "Date", "IsHoliday"], "left") \
-          .join(stores, ["Store"], "left")
+# ============================================================
+# 2. JOIN DATASETS
+# ============================================================
 
-# 4. Convert Date and create time features
-df = df.withColumn("Date", to_date(col("Date"), "yyyy-MM-dd")) \
-       .withColumn("Year", year(col("Date"))) \
-       .withColumn("Month", month(col("Date"))) \
-       .withColumn("WeekOfYear", weekofyear(col("Date")))
+print("=" * 100)
+print("JOIN DATASETS")
+print("=" * 100)
 
-# 5. Handle missing values
+df = (
+    train.join(
+        features,
+        ["Store", "Date", "IsHoliday"],
+        "left"
+    )
+    .join(
+        stores,
+        ["Store"],
+        "left"
+    )
+)
+
+# ============================================================
+# 3. FEATURE ENGINEERING
+# ============================================================
+
+print("=" * 100)
+print("FEATURE ENGINEERING")
+print("=" * 100)
+
+df = (
+    df.withColumn(
+        "Date",
+        to_date(col("Date"), "yyyy-MM-dd")
+    )
+    .withColumn(
+        "Year",
+        year(col("Date"))
+    )
+    .withColumn(
+        "Month",
+        month(col("Date"))
+    )
+    .withColumn(
+        "WeekOfYear",
+        weekofyear(col("Date"))
+    )
+    .withColumn(
+        "markdown_total",
+        coalesce(col("MarkDown1"), lit(0.0))
+        + coalesce(col("MarkDown2"), lit(0.0))
+        + coalesce(col("MarkDown3"), lit(0.0))
+        + coalesce(col("MarkDown4"), lit(0.0))
+        + coalesce(col("MarkDown5"), lit(0.0))
+    )
+)
+
+# ============================================================
+# 4. HANDLE MISSING VALUES
+# ============================================================
+
+print("=" * 100)
+print("HANDLE MISSING VALUES")
+print("=" * 100)
+
 df = df.fillna({
     "MarkDown1": 0.0,
     "MarkDown2": 0.0,
@@ -64,26 +140,56 @@ df = df.fillna({
     "Fuel_Price": 0.0
 })
 
-# 6. Check final dataset
-print("===== FINAL DATASET SHAPE =====")
+# ============================================================
+# 5. VERIFY DATASET
+# ============================================================
+
+print("=" * 100)
+print("FINAL DATASET INFORMATION")
+print("=" * 100)
+
 print("Rows:", df.count())
 print("Columns:", len(df.columns))
+
 df.printSchema()
 
-print("===== MISSING VALUES AFTER CLEANING =====")
+print("=" * 100)
+print("MISSING VALUES AFTER CLEANING")
+print("=" * 100)
+
 df.select([
-    spark_sum(col(c).isNull().cast("int")).alias(c)
+    spark_sum(
+        col(c).isNull().cast("int")
+    ).alias(c)
     for c in df.columns
 ]).show(truncate=False)
 
-# 7. Save processed dataset to HDFS as Parquet
-# Parquet is recommended for Spark because it is faster and better for SQL/MLlib
-output_path = "hdfs://localhost:9000/bigdata/walmart/processed/walmart_sales_enriched"
+# ============================================================
+# 6. SAVE TO HDFS AS PARQUET
+# ============================================================
 
-df.write \
-  .mode("overwrite") \
-  .parquet(output_path)
+output_path = (
+    "hdfs://localhost:9000/"
+    "bigdata/walmart/processed/"
+    "walmart_sales_enriched"
+)
 
-print("Saved processed dataset to:", output_path)
+print("=" * 100)
+print("SAVE walmart_sales_enriched TO HDFS")
+print("=" * 100)
+
+(
+    df.write
+    .mode("overwrite")
+    .parquet(output_path)
+)
+
+print("Output path:", output_path)
+print("Rows:", df.count())
+print("Columns:", len(df.columns))
+
+print("=" * 100)
+print("DATA PREPROCESSING COMPLETED")
+print("=" * 100)
 
 spark.stop()
