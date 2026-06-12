@@ -4,6 +4,10 @@ from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler, Imputer
 from pyspark.ml.regression import RandomForestRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 spark = (
 SparkSession.builder
 .appName("Nhom_02_Walmart_MLlib_Weekly_Sales")
@@ -228,7 +232,98 @@ r2 = RegressionEvaluator(
 print("RMSE:", round(rmse, 4))
 print("MAE :", round(mae, 4))
 print("R2  :", round(r2, 4))
+print("=" * 100)
+print("=" * 100)
+print("VISUALIZATION - ACTUAL VS PREDICTED WEEKLY SALES")
+print("=" * 100)
 
+# Lay mot phan du lieu test de ve bieu do, tranh collect qua nhieu dong ve local
+plot_df = (
+    pred
+    .select("Weekly_Sales", "prediction")
+    .dropna()
+    .sample(withReplacement=False, fraction=0.08, seed=42)
+    .limit(5000)
+    .toPandas()
+)
+
+print("Visualization sample rows:", len(plot_df))
+
+# Tao folder luu anh local de dua vao bao cao
+output_dir = "screenshots/04_mllib"
+os.makedirs(output_dir, exist_ok=True)
+
+# ------------------------------------------------------------
+# Figure 1: Full actual vs predicted chart
+# ------------------------------------------------------------
+plt.figure(figsize=(8, 6))
+
+sns.scatterplot(
+    data=plot_df,
+    x="Weekly_Sales",
+    y="prediction",
+    alpha=0.4
+)
+
+min_value = min(plot_df["Weekly_Sales"].min(), plot_df["prediction"].min())
+max_value = max(plot_df["Weekly_Sales"].max(), plot_df["prediction"].max())
+
+plt.plot(
+    [min_value, max_value],
+    [min_value, max_value],
+    color="red",
+    linestyle="--",
+    label="Perfect Prediction"
+)
+
+plt.title("Actual vs Predicted Weekly Sales - Random Forest")
+plt.xlabel("Actual Weekly Sales")
+plt.ylabel("Predicted Weekly Sales")
+plt.legend()
+plt.tight_layout()
+
+output_chart_path = f"{output_dir}/rf_actual_vs_predicted_weekly_sales.png"
+plt.savefig(output_chart_path, dpi=300)
+plt.close()
+
+print("Visualization saved to:", output_chart_path)
+
+# ------------------------------------------------------------
+# Figure 2: Zoomed chart for main sales range
+# ------------------------------------------------------------
+plot_df_zoom = plot_df[plot_df["Weekly_Sales"] <= 100000]
+
+plt.figure(figsize=(8, 6))
+
+sns.scatterplot(
+    data=plot_df_zoom,
+    x="Weekly_Sales",
+    y="prediction",
+    alpha=0.4
+)
+
+min_value = min(plot_df_zoom["Weekly_Sales"].min(), plot_df_zoom["prediction"].min())
+max_value = max(plot_df_zoom["Weekly_Sales"].max(), plot_df_zoom["prediction"].max())
+
+plt.plot(
+    [min_value, max_value],
+    [min_value, max_value],
+    color="red",
+    linestyle="--",
+    label="Perfect Prediction"
+)
+
+plt.title("Actual vs Predicted Weekly Sales - Random Forest (Zoomed)")
+plt.xlabel("Actual Weekly Sales")
+plt.ylabel("Predicted Weekly Sales")
+plt.legend()
+plt.tight_layout()
+
+output_zoom_path = f"{output_dir}/rf_actual_vs_predicted_weekly_sales_zoomed.png"
+plt.savefig(output_zoom_path, dpi=300)
+plt.close()
+
+print("Zoomed visualization saved to:", output_zoom_path)
 print("=" * 100)
 print("SAVE MODEL TO HDFS")
 print("=" * 100)
@@ -241,6 +336,10 @@ print("Model saved to:", model_output_path)
 print("=" * 100)
 print("DONE - PART 3 COMPLETED")
 print("=" * 100)
+
+plt.close()
+
+print("Zoomed visualization saved to:", output_zoom_path)
 
 input("Nhan Enter de dung Spark...")
 spark.stop()
