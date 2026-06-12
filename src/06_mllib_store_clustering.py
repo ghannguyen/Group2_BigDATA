@@ -339,24 +339,6 @@ preprocessing_model.write().overwrite().save(preprocess_model_path)
 print("Prepared features saved to:", prepared_feature_path)
 print("Preprocessing model saved to:", preprocess_model_path)
 
-<<<<<<< Updated upstream
-
-# ============================================================
-# PART 3 - KMEANS TRAINING, EVALUATION AND INTERPRETATION - Member 3
-# ============================================================
-print("=" * 100)
-print("PART 3 - TRAIN KMEANS STORE CLUSTERING MODEL")
-print("=" * 100)
-
-# Doc lai prepared data tu HDFS de chung minh PART 3 nhan output cua PART 2
-kmeans_data = spark.read.parquet(prepared_feature_path)
-
-print("Prepared feature path:", prepared_feature_path)
-print("Prepared data rows:", kmeans_data.count())
-print("Prepared data columns:", len(kmeans_data.columns))
-
-# k = 4 de chia store thanh 4 nhom van hanh
-=======
 # ============================================================
 # PART 3 - KMEANS TRAINING, EVALUATION AND BUSINESS INTERPRETATION - Member 3
 # ============================================================
@@ -369,7 +351,6 @@ print("=" * 100)
 kmeans_data = spark.read.parquet(prepared_feature_path)
 
 # Chon k=4 de chia store thanh 4 nhom van hanh de dien giai trong bao cao
->>>>>>> Stashed changes
 kmeans = KMeans(
     featuresCol="features",
     predictionCol="cluster",
@@ -391,14 +372,9 @@ clustered.select(
     "Store",
     "Type",
     "Size",
-<<<<<<< Updated upstream
-    "total_sales",
-    "avg_weekly_sales",
-=======
     "total_departments",
     "avg_store_week_sales",
     "sales_per_size",
->>>>>>> Stashed changes
     "coefficient_variation",
     "avg_markdown",
     "holiday_sales_ratio",
@@ -428,23 +404,12 @@ cluster_summary = spark.sql("""
         cluster,
         COUNT(*) AS total_stores,
         ROUND(AVG(Size), 2) AS avg_size,
-<<<<<<< Updated upstream
-        ROUND(AVG(total_sales), 2) AS avg_total_sales,
-        ROUND(AVG(avg_weekly_sales), 2) AS avg_weekly_sales,
-        ROUND(AVG(coefficient_variation), 4) AS avg_coefficient_variation,
-        ROUND(AVG(avg_markdown), 2) AS avg_markdown,
-        ROUND(AVG(markdown_record_ratio), 4) AS avg_markdown_record_ratio,
-        ROUND(AVG(holiday_sales_ratio), 4) AS avg_holiday_sales_ratio,
-        ROUND(AVG(avg_cpi), 3) AS avg_cpi,
-        ROUND(AVG(avg_unemployment), 3) AS avg_unemployment
-=======
         ROUND(AVG(total_departments), 2) AS avg_total_departments,
         ROUND(AVG(avg_store_week_sales), 2) AS avg_store_week_sales,
         ROUND(AVG(sales_per_size), 4) AS avg_sales_per_size,
         ROUND(AVG(coefficient_variation), 4) AS avg_coefficient_variation,
         ROUND(AVG(avg_markdown), 2) AS avg_markdown,
         ROUND(AVG(holiday_sales_ratio), 4) AS avg_holiday_sales_ratio
->>>>>>> Stashed changes
     FROM store_cluster_results
     GROUP BY cluster
     ORDER BY cluster
@@ -456,32 +421,17 @@ print("=" * 100)
 print("SAVE CLUSTER RESULTS AND MODEL TO HDFS")
 print("=" * 100)
 
-<<<<<<< Updated upstream
-clustered.coalesce(1).write.mode("overwrite").parquet(cluster_result_path)
-=======
 clustered.write.mode("overwrite").parquet(cluster_result_path)
->>>>>>> Stashed changes
 kmeans_model.write().overwrite().save(kmeans_model_path)
 
 print("Cluster results saved to:", cluster_result_path)
 print("KMeans model saved to:", kmeans_model_path)
 
 print("=" * 100)
-<<<<<<< Updated upstream
-print("DONE - STORE CLUSTERING EXTENSION COMPLETED")
-print("=" * 100)
-
-# Giai phong cache neu PART 1 co persist df
-try:
-    df.unpersist()
-except Exception:
-    pass
-=======
 print("DONE - STORE OPERATIONAL CLUSTERING EXTENSION COMPLETED")
 print("=" * 100)
 
 df.unpersist()
->>>>>>> Stashed changes
 
 input("Nhan Enter de dung Spark...")
 spark.stop()
