@@ -4,7 +4,9 @@ from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler, Imputer
 from pyspark.ml.regression import RandomForestRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.storagelevel import StorageLevel
 import os
+import time
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -19,6 +21,7 @@ SparkSession.builder
 spark.sparkContext.setLogLevel("ERROR")
 processed_path = "hdfs://localhost:9000/bigdata/walmart/processed/walmart_sales_enriched"
 model_output_path = "hdfs://localhost:9000/bigdata/walmart/models/rf_weekly_sales_prediction"
+benchmark_output_path = "hdfs://localhost:9000/bigdata/walmart/benchmarks/rf_pred_benchmark"
 print("=" * 100)
 print("SPARK MLLIB - WEEKLY SALES PREDICTION")
 print("=" * 100)
@@ -194,6 +197,106 @@ print("=" * 100)
 # Du doan tren tap test
 pred = model.transform(test_df)
 
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK - WITHOUT CACHE")
+print("=" * 60)
+
+rmse_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="rmse"
+)
+mae_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="mae"
+)
+r2_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="r2"
+)
+
+start_no_cache = time.perf_counter()
+metrics_no_cache = {
+    "rmse": rmse_evaluator.evaluate(pred),
+    "mae": mae_evaluator.evaluate(pred),
+    "r2": r2_evaluator.evaluate(pred)
+}
+t_no_cache = time.perf_counter() - start_no_cache
+
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK - WITH CACHE")
+print("=" * 60)
+
+pred_cached = pred.persist(StorageLevel.MEMORY_AND_DISK)
+pred_cached.count()
+
+print("=" * 60)
+print("PHYSICAL PLAN FOR CACHED PREDICTIONS")
+print("=" * 60)
+pred_cached.explain(True)
+
+start_cached = time.perf_counter()
+metrics_cached = {
+    "rmse": rmse_evaluator.evaluate(pred_cached),
+    "mae": mae_evaluator.evaluate(pred_cached),
+    "r2": r2_evaluator.evaluate(pred_cached)
+}
+t_cached = time.perf_counter() - start_cached
+
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK COMPARISON")
+print("=" * 60)
+print(
+    f"{'Mode':<12} | {'RMSE':>12} | {'MAE':>12} | "
+    f"{'R2':>10} | {'Eval Time (s)':>15}"
+)
+print("-" * 72)
+print(
+    f"{'NO_CACHE':<12} | {metrics_no_cache['rmse']:>12.4f} | "
+    f"{metrics_no_cache['mae']:>12.4f} | {metrics_no_cache['r2']:>10.4f} | "
+    f"{t_no_cache:>15.4f}"
+)
+print(
+    f"{'WITH_CACHE':<12} | {metrics_cached['rmse']:>12.4f} | "
+    f"{metrics_cached['mae']:>12.4f} | {metrics_cached['r2']:>10.4f} | "
+    f"{t_cached:>15.4f}"
+)
+
+benchmark_rows = [
+    (
+        "NO_CACHE",
+        float(metrics_no_cache["rmse"]),
+        float(metrics_no_cache["mae"]),
+        float(metrics_no_cache["r2"]),
+        float(t_no_cache)
+    ),
+    (
+        "WITH_CACHE",
+        float(metrics_cached["rmse"]),
+        float(metrics_cached["mae"]),
+        float(metrics_cached["r2"]),
+        float(t_cached)
+    )
+]
+
+benchmark_df = spark.createDataFrame(
+    benchmark_rows,
+    ["mode", "rmse", "mae", "r2", "eval_time_seconds"]
+)
+
+print("=" * 60)
+print("SAVE PREDICTION BENCHMARK TO HDFS")
+print("=" * 60)
+(
+    benchmark_df.write
+    .mode("overwrite")
+    .option("header", True)
+    .csv(benchmark_output_path)
+)
+print("Benchmark saved to:", benchmark_output_path)
+
 # In mau ket qua du doan de dua vao bao cao
 pred.select(
     "Store",
@@ -211,23 +314,9 @@ print("MODEL EVALUATION")
 print("=" * 100)
 
 # Danh gia mo hinh bang RegressionEvaluator
-rmse = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="rmse"
-).evaluate(pred)
-
-mae = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="mae"
-).evaluate(pred)
-
-r2 = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="r2"
-).evaluate(pred)
+rmse = metrics_cached["rmse"]
+mae = metrics_cached["mae"]
+r2 = metrics_cached["r2"]
 
 print("RMSE:", round(rmse, 4))
 print("MAE :", round(mae, 4))
@@ -339,7 +428,6 @@ print("=" * 100)
 
 plt.close()
 
-print("Zoomed visualization saved to:", output_zoom_path)
 # ------------------------------------------------------------
 # Figure 3: Residual distribution chart
 # ------------------------------------------------------------
@@ -373,5 +461,9 @@ plt.savefig(output_residual_path, dpi=300)
 plt.close()
 
 print("Residual distribution visualization saved to:", output_residual_path)
+print("=" * 60)
+print("UNPERSIST CACHED PREDICTIONS")
+print("=" * 60)
+pred_cached.unpersist()
 input("Nhan Enter de dung Spark...")
 spark.stop()
