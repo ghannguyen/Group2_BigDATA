@@ -58,7 +58,7 @@ preprocess_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_sto
 kmeans_model_path = "hdfs://localhost:9000/bigdata/walmart/models/kmeans_store_operational_clustering"
 
 # Thu muc local de luu hinh truc quan hoa dua vao bao cao
-visualization_dir = "outputs/kmeans_store_operational_clustering"
+visualization_dir = "screenshots/04_mllib"
 
 
 print("=" * 100)
@@ -451,7 +451,7 @@ if HAS_MATPLOTLIB:
         "Number of stores by cluster",
         "Cluster",
         "Total stores",
-        "cluster_total_stores.png"
+        "kmeans_total_stores_by_cluster.png"
     )
 
     save_bar_chart(
@@ -460,7 +460,7 @@ if HAS_MATPLOTLIB:
         "Average weekly store sales by cluster",
         "Cluster",
         "Average weekly store sales",
-        "cluster_avg_store_week_sales.png"
+        "kmeans_average_weekly_store_sales_by_cluster.png"
     )
 
     save_bar_chart(
@@ -469,7 +469,7 @@ if HAS_MATPLOTLIB:
         "Average sales per size by cluster",
         "Cluster",
         "Average sales per size",
-        "cluster_avg_sales_per_size.png"
+        "kmeans_average_sales_per_size_by_cluster.png"
     )
 
     save_bar_chart(
@@ -478,7 +478,7 @@ if HAS_MATPLOTLIB:
         "Average sales volatility by cluster",
         "Cluster",
         "Average coefficient variation",
-        "cluster_avg_coefficient_variation.png"
+        "kmeans_average_sales_volatility_by_cluster.png"
     )
 
     print("Visualization folder:", os.path.abspath(visualization_dir))
