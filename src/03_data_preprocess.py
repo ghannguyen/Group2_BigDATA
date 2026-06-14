@@ -18,7 +18,7 @@ from pyspark.sql.functions import (
 
 spark = (
     SparkSession.builder
-    .appName("Walmart_Preprocess")
+    .appName("Nhom_02_Walmart_Big_Data_Preprocess")
     .config("spark.hadoop.fs.defaultFS", "hdfs://localhost:9000")
     .getOrCreate()
 )
