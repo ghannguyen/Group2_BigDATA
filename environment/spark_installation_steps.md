@@ -38,7 +38,7 @@ Command:
 
 Command:
 
-    cd /Users/hannguyen/Documents/Nhom_02
+    cd /Users/hannguyen/Documents/Group2_BigDATA
     python3 src/02_read_from_hdfs.py
 
 ## 7. Spark UI
