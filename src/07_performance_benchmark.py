@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as F
 
 
-APP_NAME = "Walmart_Performance_Benchmark"
+APP_NAME = "Nhom_02_Walmart_Big_Data_SQL_Cache_Benchmark"
 PROCESSED_PATH = (
     "hdfs://localhost:9000/bigdata/walmart/processed/"
     "walmart_sales_enriched"
