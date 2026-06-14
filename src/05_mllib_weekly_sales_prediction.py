@@ -4,6 +4,12 @@ from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler, Imputer
 from pyspark.ml.regression import RandomForestRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.storagelevel import StorageLevel
+import os
+import time
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 spark = (
 SparkSession.builder
 .appName("Nhom_02_Walmart_MLlib_Weekly_Sales")
@@ -15,6 +21,7 @@ SparkSession.builder
 spark.sparkContext.setLogLevel("ERROR")
 processed_path = "hdfs://localhost:9000/bigdata/walmart/processed/walmart_sales_enriched"
 model_output_path = "hdfs://localhost:9000/bigdata/walmart/models/rf_weekly_sales_prediction"
+benchmark_output_path = "hdfs://localhost:9000/bigdata/walmart/benchmarks/rf_pred_benchmark"
 print("=" * 100)
 print("SPARK MLLIB - WEEKLY SALES PREDICTION")
 print("=" * 100)
@@ -190,6 +197,106 @@ print("=" * 100)
 # Du doan tren tap test
 pred = model.transform(test_df)
 
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK - WITHOUT CACHE")
+print("=" * 60)
+
+rmse_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="rmse"
+)
+mae_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="mae"
+)
+r2_evaluator = RegressionEvaluator(
+    labelCol="Weekly_Sales",
+    predictionCol="prediction",
+    metricName="r2"
+)
+
+start_no_cache = time.perf_counter()
+metrics_no_cache = {
+    "rmse": rmse_evaluator.evaluate(pred),
+    "mae": mae_evaluator.evaluate(pred),
+    "r2": r2_evaluator.evaluate(pred)
+}
+t_no_cache = time.perf_counter() - start_no_cache
+
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK - WITH CACHE")
+print("=" * 60)
+
+pred_cached = pred.persist(StorageLevel.MEMORY_AND_DISK)
+pred_cached.count()
+
+print("=" * 60)
+print("PHYSICAL PLAN FOR CACHED PREDICTIONS")
+print("=" * 60)
+pred_cached.explain(True)
+
+start_cached = time.perf_counter()
+metrics_cached = {
+    "rmse": rmse_evaluator.evaluate(pred_cached),
+    "mae": mae_evaluator.evaluate(pred_cached),
+    "r2": r2_evaluator.evaluate(pred_cached)
+}
+t_cached = time.perf_counter() - start_cached
+
+print("=" * 60)
+print("PREDICTION EVALUATION BENCHMARK COMPARISON")
+print("=" * 60)
+print(
+    f"{'Mode':<12} | {'RMSE':>12} | {'MAE':>12} | "
+    f"{'R2':>10} | {'Eval Time (s)':>15}"
+)
+print("-" * 72)
+print(
+    f"{'NO_CACHE':<12} | {metrics_no_cache['rmse']:>12.4f} | "
+    f"{metrics_no_cache['mae']:>12.4f} | {metrics_no_cache['r2']:>10.4f} | "
+    f"{t_no_cache:>15.4f}"
+)
+print(
+    f"{'WITH_CACHE':<12} | {metrics_cached['rmse']:>12.4f} | "
+    f"{metrics_cached['mae']:>12.4f} | {metrics_cached['r2']:>10.4f} | "
+    f"{t_cached:>15.4f}"
+)
+
+benchmark_rows = [
+    (
+        "NO_CACHE",
+        float(metrics_no_cache["rmse"]),
+        float(metrics_no_cache["mae"]),
+        float(metrics_no_cache["r2"]),
+        float(t_no_cache)
+    ),
+    (
+        "WITH_CACHE",
+        float(metrics_cached["rmse"]),
+        float(metrics_cached["mae"]),
+        float(metrics_cached["r2"]),
+        float(t_cached)
+    )
+]
+
+benchmark_df = spark.createDataFrame(
+    benchmark_rows,
+    ["mode", "rmse", "mae", "r2", "eval_time_seconds"]
+)
+
+print("=" * 60)
+print("SAVE PREDICTION BENCHMARK TO HDFS")
+print("=" * 60)
+(
+    benchmark_df.write
+    .mode("overwrite")
+    .option("header", True)
+    .csv(benchmark_output_path)
+)
+print("Benchmark saved to:", benchmark_output_path)
+
 # In mau ket qua du doan de dua vao bao cao
 pred.select(
     "Store",
@@ -207,28 +314,105 @@ print("MODEL EVALUATION")
 print("=" * 100)
 
 # Danh gia mo hinh bang RegressionEvaluator
-rmse = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="rmse"
-).evaluate(pred)
-
-mae = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="mae"
-).evaluate(pred)
-
-r2 = RegressionEvaluator(
-    labelCol="Weekly_Sales",
-    predictionCol="prediction",
-    metricName="r2"
-).evaluate(pred)
+rmse = metrics_cached["rmse"]
+mae = metrics_cached["mae"]
+r2 = metrics_cached["r2"]
 
 print("RMSE:", round(rmse, 4))
 print("MAE :", round(mae, 4))
 print("R2  :", round(r2, 4))
+print("=" * 100)
+print("=" * 100)
+print("VISUALIZATION - ACTUAL VS PREDICTED WEEKLY SALES")
+print("=" * 100)
 
+# Lay mot phan du lieu test de ve bieu do, tranh collect qua nhieu dong ve local
+plot_df = (
+    pred
+    .select("Weekly_Sales", "prediction")
+    .dropna()
+    .sample(withReplacement=False, fraction=0.08, seed=42)
+    .limit(5000)
+    .toPandas()
+)
+
+print("Visualization sample rows:", len(plot_df))
+
+# Tao folder luu anh local de dua vao bao cao
+output_dir = "screenshots/04_mllib"
+os.makedirs(output_dir, exist_ok=True)
+
+# ------------------------------------------------------------
+# Figure 1: Full actual vs predicted chart
+# ------------------------------------------------------------
+plt.figure(figsize=(8, 6))
+
+sns.scatterplot(
+    data=plot_df,
+    x="Weekly_Sales",
+    y="prediction",
+    alpha=0.4
+)
+
+min_value = min(plot_df["Weekly_Sales"].min(), plot_df["prediction"].min())
+max_value = max(plot_df["Weekly_Sales"].max(), plot_df["prediction"].max())
+
+plt.plot(
+    [min_value, max_value],
+    [min_value, max_value],
+    color="red",
+    linestyle="--",
+    label="Perfect Prediction"
+)
+
+plt.title("Actual vs Predicted Weekly Sales - Random Forest")
+plt.xlabel("Actual Weekly Sales")
+plt.ylabel("Predicted Weekly Sales")
+plt.legend()
+plt.tight_layout()
+
+output_chart_path = f"{output_dir}/rf_actual_vs_predicted_weekly_sales.png"
+plt.savefig(output_chart_path, dpi=300)
+plt.close()
+
+print("Visualization saved to:", output_chart_path)
+
+# ------------------------------------------------------------
+# Figure 2: Zoomed chart for main sales range
+# ------------------------------------------------------------
+plot_df_zoom = plot_df[plot_df["Weekly_Sales"] <= 100000]
+
+plt.figure(figsize=(8, 6))
+
+sns.scatterplot(
+    data=plot_df_zoom,
+    x="Weekly_Sales",
+    y="prediction",
+    alpha=0.4
+)
+
+min_value = min(plot_df_zoom["Weekly_Sales"].min(), plot_df_zoom["prediction"].min())
+max_value = max(plot_df_zoom["Weekly_Sales"].max(), plot_df_zoom["prediction"].max())
+
+plt.plot(
+    [min_value, max_value],
+    [min_value, max_value],
+    color="red",
+    linestyle="--",
+    label="Perfect Prediction"
+)
+
+plt.title("Actual vs Predicted Weekly Sales - Random Forest (Zoomed)")
+plt.xlabel("Actual Weekly Sales")
+plt.ylabel("Predicted Weekly Sales")
+plt.legend()
+plt.tight_layout()
+
+output_zoom_path = f"{output_dir}/rf_actual_vs_predicted_weekly_sales_zoomed.png"
+plt.savefig(output_zoom_path, dpi=300)
+plt.close()
+
+print("Zoomed visualization saved to:", output_zoom_path)
 print("=" * 100)
 print("SAVE MODEL TO HDFS")
 print("=" * 100)
@@ -242,5 +426,44 @@ print("=" * 100)
 print("DONE - PART 3 COMPLETED")
 print("=" * 100)
 
+plt.close()
+
+# ------------------------------------------------------------
+# Figure 3: Residual distribution chart
+# ------------------------------------------------------------
+
+plot_df["residual"] = plot_df["prediction"] - plot_df["Weekly_Sales"]
+
+plt.figure(figsize=(8, 6))
+
+sns.histplot(
+    data=plot_df,
+    x="residual",
+    bins=50,
+    kde=True
+)
+
+plt.axvline(
+    x=0,
+    color="red",
+    linestyle="--",
+    label="Zero Error"
+)
+
+plt.title("Residual Distribution - Random Forest")
+plt.xlabel("Prediction Error (Predicted - Actual)")
+plt.ylabel("Frequency")
+plt.legend()
+plt.tight_layout()
+
+output_residual_path = f"{output_dir}/rf_residual_distribution_weekly_sales.png"
+plt.savefig(output_residual_path, dpi=300)
+plt.close()
+
+print("Residual distribution visualization saved to:", output_residual_path)
+print("=" * 60)
+print("UNPERSIST CACHED PREDICTIONS")
+print("=" * 60)
+pred_cached.unpersist()
 input("Nhan Enter de dung Spark...")
 spark.stop()

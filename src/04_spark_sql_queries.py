@@ -230,7 +230,7 @@ query_4 = spark.sql("""
                 ELSE 'High Fuel Price'
             END AS fuel_group,
             CASE
-                WHEN CPI < 150 THEN 'Low CPspark-submit src\04_spark_sql_queries.pyI'
+                WHEN CPI < 150 THEN 'Low CPI'
                 WHEN CPI BETWEEN 150 AND 220 THEN 'Medium CPI'
                 ELSE 'High CPI'
             END AS cpi_group,
@@ -294,55 +294,59 @@ print("\n" + "=" * 90)
 print("EXPLAIN CHO CAU 4")
 print("=" * 90)
 query_4.explain(True)
-# Cau 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam
-# Muc dich: xac dinh cac cua hang co toc do tang truong doanh so cao nhat so voi nam truoc.
+
+# Cau 5: Xac dinh cua hang phu thuoc nhieu nhat vao khuyen mai
+# Muc dich: tinh ty trong doanh so den tu cac tuan co Markdown cua tung cua hang.
 query_5 = spark.sql("""
-    WITH yearly_store_sales AS (
+    WITH store_promo_sales AS (
         SELECT
             Store,
             Type,
-            Year,
-            ROUND(SUM(Weekly_Sales), 2) AS yearly_sales
+            ROUND(SUM(Weekly_Sales), 2) AS total_sales,
+            ROUND(SUM(CASE WHEN markdown_total > 0 THEN Weekly_Sales ELSE 0 END), 2) AS promo_sales,
+            COUNT(*) AS total_records,
+            SUM(CASE WHEN markdown_total > 0 THEN 1 ELSE 0 END) AS promo_records
         FROM walmart_sales_enriched
-        GROUP BY Store, Type, Year
+        GROUP BY Store, Type
     ),
-    growth_table AS (
+    ranked_promo_dependency AS (
         SELECT
             Store,
             Type,
-            Year,
-            yearly_sales,
-            LAG(yearly_sales) OVER (
-                PARTITION BY Store
-                ORDER BY Year
-            ) AS previous_year_sales
-        FROM yearly_store_sales
+            total_sales,
+            promo_sales,
+            total_records,
+            promo_records,
+            ROUND((promo_sales / total_sales) * 100, 2) AS promo_sales_ratio,
+            ROUND((promo_records / total_records) * 100, 2) AS promo_record_ratio,
+            DENSE_RANK() OVER (
+                PARTITION BY Type
+                ORDER BY (promo_sales / total_sales) DESC
+            ) AS promo_dependency_rank
+        FROM store_promo_sales
+        WHERE total_sales > 0
     )
     SELECT
         Store,
         Type,
-        Year,
-        yearly_sales,
-        previous_year_sales,
-        ROUND(yearly_sales - previous_year_sales, 2) AS sales_change,
-        ROUND(((yearly_sales - previous_year_sales) / previous_year_sales) * 100, 2) AS growth_rate_percent
-    FROM growth_table
-    WHERE previous_year_sales IS NOT NULL
-    ORDER BY growth_rate_percent DESC
-    LIMIT 5
+        total_sales,
+        promo_sales,
+        promo_sales_ratio,
+        promo_record_ratio,
+        promo_dependency_rank
+    FROM ranked_promo_dependency
+    WHERE promo_dependency_rank <= 5
+    ORDER BY Type, promo_dependency_rank
 """)
 
-
 print("\n" + "=" * 90)
-print("CAU 5: Top 5 cua hang tang truong doanh so manh nhat giua cac nam")
+print("CAU 5: Cua hang phu thuoc nhieu nhat vao khuyen mai theo tung Type")
 print("=" * 90)
 query_5.show(50, truncate=False)
 
+# Cau 6: Department dong gop doanh so chu luc cua toan he thong Walmart
+# Muc dich: xac dinh department nao xuat hien nhieu nhat trong vi tri doanh so so 1 cua cac cua hang.
 
-
-
-# Cau 6: Phan tich department co doanh so cao hon trung binh cua chinh cua hang
-# Muc dich: tim cac department dong gop noi bat va vuot muc trung binh doanh thu trong tung cua hang.
 query_6 = spark.sql("""
     WITH dept_store_sales AS (
         SELECT
@@ -353,95 +357,127 @@ query_6 = spark.sql("""
         FROM walmart_sales_enriched
         GROUP BY Store, Type, Dept
     ),
-    store_avg AS (
+    ranked_departments AS (
         SELECT
             Store,
-            ROUND(AVG(dept_total_sales), 2) AS avg_dept_sales_in_store
+            Type,
+            Dept,
+            dept_total_sales,
+            DENSE_RANK() OVER (
+                PARTITION BY Store
+                ORDER BY dept_total_sales DESC
+            ) AS dept_rank
         FROM dept_store_sales
-        GROUP BY Store
+    ),
+    top_department_per_store AS (
+        SELECT
+            Store,
+            Type,
+            Dept,
+            dept_total_sales
+        FROM ranked_departments
+        WHERE dept_rank = 1
     )
     SELECT
-        d.Store,
-        d.Type,
-        d.Dept,
-        d.dept_total_sales,
-        s.avg_dept_sales_in_store,
-        ROUND(d.dept_total_sales - s.avg_dept_sales_in_store, 2) AS difference_from_store_avg
-    FROM dept_store_sales d
-    JOIN store_avg s
-        ON d.Store = s.Store
-    WHERE d.dept_total_sales > s.avg_dept_sales_in_store
-    ORDER BY difference_from_store_avg DESC
-    LIMIT 10
+        Dept,
+        COUNT(Store) AS number_of_stores,
+        ROUND(SUM(dept_total_sales), 2) AS total_sales_from_top_rank,
+        ROUND(AVG(dept_total_sales), 2) AS avg_sales_per_store,
+        DENSE_RANK() OVER (
+            ORDER BY COUNT(Store) DESC
+        ) AS department_rank
+    FROM top_department_per_store
+    GROUP BY Dept
+    ORDER BY number_of_stores DESC, total_sales_from_top_rank DESC
 """)
 
-
 print("\n" + "=" * 90)
-print("CAU 6: Department co doanh so cao hon trung binh cua chinh cua hang")
+print("CAU 6: Department dong gop doanh so chu luc cua toan he thong Walmart")
 print("=" * 90)
 query_6.show(50, truncate=False)
 
-
-
-
-# Cau 7: Xep hang nhom nhiet do co doanh so cao nhat theo tung loai cua hang
-# Muc dich: phan tich dieu kien nhiet do nao tao ra doanh so trung binh cao nhat trong tung Type.
+# Cau 7: Phan tich tac dong cua ngay le den doanh so theo Type va nhom quy mo cua hang
+# Muc dich: so sanh doanh so giua Holiday Week va Normal Week de xac dinh nhom cua hang huong loi nhieu nhat tu mua le.
 query_7 = spark.sql("""
-    WITH temperature_sales AS (
+    WITH holiday_base AS (
         SELECT
+            Store,
             Type,
             CASE
-                WHEN Temperature < 40 THEN 'Cold'
-                WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
-                ELSE 'Hot'
-            END AS temperature_group,
+                WHEN Size < 100000 THEN 'Small Store'
+                WHEN Size BETWEEN 100000 AND 180000 THEN 'Medium Store'
+                ELSE 'Large Store'
+            END AS size_group,
+            IsHoliday,
+            Weekly_Sales
+        FROM walmart_sales_enriched
+    ),
+    holiday_summary AS (
+        SELECT
+            Type,
+            size_group,
+            IsHoliday,
             COUNT(*) AS total_records,
-            ROUND(AVG(Temperature), 2) AS avg_temperature,
+            COUNT(DISTINCT Store) AS total_stores,
             ROUND(SUM(Weekly_Sales), 2) AS total_sales,
             ROUND(AVG(Weekly_Sales), 2) AS avg_weekly_sales
-        FROM walmart_sales_enriched
-        GROUP BY
-            Type,
-            CASE
-                WHEN Temperature < 40 THEN 'Cold'
-                WHEN Temperature BETWEEN 40 AND 70 THEN 'Mild'
-                ELSE 'Hot'
-            END
+        FROM holiday_base
+        GROUP BY Type, size_group, IsHoliday
     ),
-    ranked_temperature AS (
+    holiday_compare AS (
         SELECT
             Type,
-            temperature_group,
-            total_records,
-            avg_temperature,
-            total_sales,
-            avg_weekly_sales,
+            size_group,
+            MAX(CASE WHEN IsHoliday = true THEN avg_weekly_sales END) AS avg_sales_holiday,
+            MAX(CASE WHEN IsHoliday = false THEN avg_weekly_sales END) AS avg_sales_normal,
+            MAX(CASE WHEN IsHoliday = true THEN total_sales END) AS total_sales_holiday,
+            MAX(CASE WHEN IsHoliday = false THEN total_sales END) AS total_sales_normal,
+            MAX(CASE WHEN IsHoliday = true THEN total_records END) AS holiday_records,
+            MAX(CASE WHEN IsHoliday = false THEN total_records END) AS normal_records
+        FROM holiday_summary
+        GROUP BY Type, size_group
+    ),
+    ranked_impact AS (
+        SELECT
+            Type,
+            size_group,
+            holiday_records,
+            normal_records,
+            total_sales_holiday,
+            total_sales_normal,
+            avg_sales_holiday,
+            avg_sales_normal,
+            ROUND(avg_sales_holiday - avg_sales_normal, 2) AS holiday_sales_lift,
+            ROUND(
+                ((avg_sales_holiday - avg_sales_normal) / avg_sales_normal) * 100,
+                2
+            ) AS holiday_lift_percent,
             DENSE_RANK() OVER (
-                PARTITION BY Type
-                ORDER BY avg_weekly_sales DESC
-            ) AS temperature_rank
-        FROM temperature_sales
+                ORDER BY ((avg_sales_holiday - avg_sales_normal) / avg_sales_normal) DESC
+            ) AS holiday_impact_rank
+        FROM holiday_compare
+        WHERE avg_sales_holiday IS NOT NULL
+          AND avg_sales_normal IS NOT NULL
+          AND avg_sales_normal > 0
     )
     SELECT
         Type,
-        temperature_group,
-        total_records,
-        avg_temperature,
-        total_sales,
-        avg_weekly_sales,
-        temperature_rank
-    FROM ranked_temperature
-    ORDER BY Type, temperature_rank
+        size_group,
+        holiday_records,
+        normal_records,
+        avg_sales_holiday,
+        avg_sales_normal,
+        holiday_sales_lift,
+        holiday_lift_percent,
+        holiday_impact_rank
+    FROM ranked_impact
+    ORDER BY holiday_impact_rank
 """)
 
-
 print("\n" + "=" * 90)
-print("CAU 7: Xep hang nhom nhiet do co doanh so cao nhat theo tung loai cua hang")
+print("CAU 7: Tac dong cua ngay le den doanh so theo Type va nhom quy mo cua hang")
 print("=" * 90)
 query_7.show(50, truncate=False)
-
-
-
 
 # Cau 8: Xep hang tuan co doanh so cao nhat trong tung nam
 # Muc dich: tim cac tuan cao diem doanh so cua tung nam de ho tro lap ke hoach ton kho va khuyen mai.
